@@ -1,33 +1,78 @@
-// app/api/openai.ts
+import { type OpenAIListModelResponse } from "@/app/client/platforms/openai";
+import { getServerSideConfig } from "@/app/config/server";
+import { ModelProvider, OpenaiPath } from "@/app/constant";
+import { prettyObject } from "@/app/utils/format";
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "./auth";
+import { requestOpenai } from "./common";
 
-import { OpenAI } from "openai";
-import { NextRequest } from "next/server";
+const ALLOWED_PATH = new Set(Object.values(OpenaiPath));
 
-const client = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: "https://openrouter.ai/api/v1",
-  dangerouslyAllowBrowser: true,
-});
+function getModels(remoteModelRes: OpenAIListModelResponse) {
+  const config = getServerSideConfig();
 
-export async function handle(req: NextRequest, { params }: { params: { path: string[] } }) {
-  try {
-    const { messages, ...rest } = await req.json();
+  if (config.disableGPT4) {
+    remoteModelRes.data = remoteModelRes.data.filter(
+      (m) =>
+        !(
+          m.id.startsWith("gpt-4") ||
+          m.id.startsWith("chatgpt-4o") ||
+          m.id.startsWith("o1") ||
+          m.id.startsWith("o3")
+        ) || m.id.startsWith("gpt-4o-mini"),
+    );
+  }
 
-    const response = await client.chat.completions.create({
-      ...rest,
-      messages: messages,
-      extra_headers: {
-        "HTTP-Referer": "https://test4401.webnode.page/?_gl=1*1nbyivq*_gcl_au*MTk3NzM5MTEyMC4xNzM5MTU1NDY2",
-        "X-Title": "智慧時代",
+  return remoteModelRes;
+}
+
+export async function handle(
+  req: NextRequest,
+  { params }: { params: { path: string[] } },
+) {
+  console.log("[OpenAI Route] params ", params);
+
+  if (req.method === "OPTIONS") {
+    return NextResponse.json({ body: "OK" }, { status: 200 });
+  }
+
+  const subpath = params.path.join("/");
+
+  if (!ALLOWED_PATH.has(subpath)) {
+    console.log("[OpenAI Route] forbidden path ", subpath);
+    return NextResponse.json(
+      {
+        error: true,
+        msg: "you are not allowed to request " + subpath,
       },
-    });
+      {
+        status: 403,
+      },
+    );
+  }
 
-    return new Response(JSON.stringify(response), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+  const authResult = auth(req, ModelProvider.GPT);
+  if (authResult.error) {
+    return NextResponse.json(authResult, {
+      status: 401,
     });
-  } catch (error) {
-    console.error("[OpenRouter API] ", error);
-    return new Response("OpenRouter API Error", { status: 500 });
+  }
+
+  try {
+    const response = await requestOpenai(req);
+
+    // list models
+    if (subpath === OpenaiPath.ListModelPath && response.status === 200) {
+      const resJson = (await response.json()) as OpenAIListModelResponse;
+      const availableModels = getModels(resJson);
+      return NextResponse.json(availableModels, {
+        status: response.status,
+      });
+    }
+
+    return response;
+  } catch (e) {
+    console.error("[OpenAI] ", e);
+    return NextResponse.json(prettyObject(e));
   }
 }
