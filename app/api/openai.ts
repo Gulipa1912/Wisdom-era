@@ -17,8 +17,8 @@ export async function handle(req: NextRequest, { params }: { params: { path: str
       ...rest,
       messages: messages,
       extra_headers: {
-        "HTTP-Referer": "<YOUR_SITE_URL>",
-        "X-Title": "<YOUR_SITE_NAME>",
+        "HTTP-Referer": "https://test4401.webnode.page/?_gl=1*1nbyivq*_gcl_au*MTk3NzM5MTEyMC4xNzM5MTU1NDY2",
+        "X-Title": "智慧時代",
       },
     });
 
