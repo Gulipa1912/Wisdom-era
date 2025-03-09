@@ -1,78 +1,33 @@
-import { type OpenAIListModelResponse } from "@/app/client/platforms/openai";
-import { getServerSideConfig } from "@/app/config/server";
-import { ModelProvider, OpenaiPath } from "@/app/constant";
-import { prettyObject } from "@/app/utils/format";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "./auth";
-import { requestOpenai } from "./common";
+// app/api/openai.ts
 
-const ALLOWED_PATH = new Set(Object.values(OpenaiPath));
+import { OpenAI } from "openai";
+import { NextRequest } from "next/server";
 
-function getModels(remoteModelRes: OpenAIListModelResponse) {
-  const config = getServerSideConfig();
+const client = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
+  dangerouslyAllowBrowser: true,
+});
 
-  if (config.disableGPT4) {
-    remoteModelRes.data = remoteModelRes.data.filter(
-      (m) =>
-        !(
-          m.id.startsWith("gpt-4") ||
-          m.id.startsWith("chatgpt-4o") ||
-          m.id.startsWith("o1") ||
-          m.id.startsWith("o3")
-        ) || m.id.startsWith("gpt-4o-mini"),
-    );
-  }
-
-  return remoteModelRes;
-}
-
-export async function handle(
-  req: NextRequest,
-  { params }: { params: { path: string[] } },
-) {
-  console.log("[OpenAI Route] params ", params);
-
-  if (req.method === "OPTIONS") {
-    return NextResponse.json({ body: "OK" }, { status: 200 });
-  }
-
-  const subpath = params.path.join("/");
-
-  if (!ALLOWED_PATH.has(subpath)) {
-    console.log("[OpenAI Route] forbidden path ", subpath);
-    return NextResponse.json(
-      {
-        error: true,
-        msg: "you are not allowed to request " + subpath,
-      },
-      {
-        status: 403,
-      },
-    );
-  }
-
-  const authResult = auth(req, ModelProvider.GPT);
-  if (authResult.error) {
-    return NextResponse.json(authResult, {
-      status: 401,
-    });
-  }
-
+export async function handle(req: NextRequest, { params }: { params: { path: string[] } }) {
   try {
-    const response = await requestOpenai(req);
+    const { messages, ...rest } = await req.json();
 
-    // list models
-    if (subpath === OpenaiPath.ListModelPath && response.status === 200) {
-      const resJson = (await response.json()) as OpenAIListModelResponse;
-      const availableModels = getModels(resJson);
-      return NextResponse.json(availableModels, {
-        status: response.status,
-      });
-    }
+    const response = await client.chat.completions.create({
+      ...rest,
+      messages: messages,
+      extra_headers: {
+        "HTTP-Referer": "<YOUR_SITE_URL>",
+        "X-Title": "<YOUR_SITE_NAME>",
+      },
+    });
 
-    return response;
-  } catch (e) {
-    console.error("[OpenAI] ", e);
-    return NextResponse.json(prettyObject(e));
+    return new Response(JSON.stringify(response), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    console.error("[OpenRouter API] ", error);
+    return new Response("OpenRouter API Error", { status: 500 });
   }
 }
